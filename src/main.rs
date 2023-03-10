@@ -1,21 +1,43 @@
 #![no_std]
 #![no_main]
+#![feature(sync_unsafe_cell)]
 
+mod mutex;
 mod uart;
 
 use core::{
     arch::{asm, global_asm},
     panic::PanicInfo,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
+use mutex::Mutex;
 use uart::Uart;
 
 global_asm!(include_str!("boot.s"));
 
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static NEXT_CANDIDATE: Mutex<u64> = Mutex::new((1 << 63) - 1);
+
 #[no_mangle]
-extern "C" fn main() {
+extern "C" fn main(cpu_index: i32, stack_top: u64) {
     Uart::init();
-    search_primes(0);
+    println!("Initialized");
+    INITIALIZED.store(true, Ordering::SeqCst);
+
+    println!("[{}] Stack top is {:x}", cpu_index, stack_top);
+
+    search_primes(cpu_index);
+}
+
+#[no_mangle]
+extern "C" fn main_secondary(cpu_index: i32, stack_top: u64) {
+    while !INITIALIZED.load(Ordering::SeqCst) {
+        core::hint::spin_loop()
+    }
+    println!("[{}] Stack top is {:x}", cpu_index, stack_top);
+
+    search_primes(cpu_index);
 }
 
 #[panic_handler]
@@ -34,8 +56,13 @@ fn shutdown() {
 }
 
 fn search_primes(cpu_index: i32) {
-    let search_start = (1 << 47) - 1;
-    'next_candidate: for candidate in (search_start..).step_by(2) {
+    'next_candidate: loop {
+        let candidate = {
+            let mut next = NEXT_CANDIDATE.lock();
+            let candidate = *next;
+            *next += 2;
+            candidate
+        };
         for divisor in 3..=approx_sqrt(candidate) {
             if candidate % divisor == 0 {
                 continue 'next_candidate;

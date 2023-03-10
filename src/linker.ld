@@ -20,7 +20,8 @@ SECTIONS
   .bss : ALIGN(4K) {
     *(.bss .bss.*)
     . = ALIGN(4K);
-    . += 4K;
+    PROVIDE(stack_bottom = .);
+    . += 32K;
     PROVIDE(stack_top = .);
   }
 }
